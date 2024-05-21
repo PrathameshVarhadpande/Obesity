@@ -1,0 +1,532 @@
+---
+title: "Obesity prevalence estimation in the 500 US cities at the neighborhood level"
+author: "Ryan Zhenqi Zhou (zhenqizh), Prathamesh Ravindra Varhadpande (pvarhadp), and Nikhil Gokhale (gokhale7)"
+date: "2024-04-29"
+output: html_document
+---
+
+# Obesity Prevalence Estimation in the 500 US Cities at the Neighborhood Level
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Analysis and Modeling Framework:
+
+1.  Data and Statistical Analysis
+    1.  Map Plot based on Obesity Rate
+    2.  Analyzing Data using Boxplots
+    3.  Analyzing Data using Histogram
+2.  Multi-Collinearity Diagnosis
+3.  Statistical and Machine Learning Models
+    1.  Ordinary Least Squares (OLS)
+        1.  R-Squared and RMSE
+        2.  Plotting Regression Coefficient Values
+    2.  Geographically Weighted Regression (GWR)
+        1.  R-Squared and RMSE
+        2.  Plotting Mean Regression Coefficient Values
+    3.  Random Forest (RF)
+        1.  R-Squared and RMSE
+        2.  Plotting Feature Importance
+
+### R Libraries required for Data Analysis, Multi-Collinearity Diagnosis, Statistical and Machine Learning Models
+
+```{r}
+# required libraries
+
+library(ggplot2)
+library(maps)
+library(plotly)
+library(leaflet)
+library(car)
+library(caret)
+library(gt)
+library(dplyr)
+library(DAAG)
+library(randomForest)
+library(spgwr)
+library(Metrics)
+library(sp)
+library(geoR)
+library(ranger)
+library(psych)
+library(knitr)
+library(sf)
+
+suppressWarnings({
+  library(ggplot2)
+  library(maps)
+  library(plotly)
+  library(leaflet)
+  library(car)
+  library(caret)
+  library(gt)
+  library(dplyr)
+  library(DAAG)
+  library(randomForest)
+  library(spgwr)
+  library(sp)
+  library(Metrics)
+  library(geoR)
+  library(ranger)
+  library(psych)
+  library(knitr)
+  library(sf)
+})
+```
+
+### Reading Data from the Dataset
+
+```{r}
+# reading data from csv file
+
+data <-  read.csv("obesity_estimation_final.csv")
+data_summary = data.frame(data)
+```
+
+### Displaying Initial Records and Summary of the Dataset
+
+```{r}
+# displaying first 6 rows of the dataset
+head(data)
+
+#displaying the summary of the dataset
+suppressWarnings(
+  describe(data_summary,fast = TRUE)
+)
+```
+
+### Map Plot Based on Obesity Rate
+
+```{r}
+# Display Obesity rate on map
+
+# Create a leaflet map
+map <- leaflet(data) %>%
+  addTiles() %>%
+  setView(lng = mean(data$lon), lat = mean(data$lat), zoom = 2)
+
+# Add markers to the map
+map <- addCircleMarkers(map, 
+                        lng = ~lon, 
+                        lat = ~lat, 
+                        radius = 2, 
+                        color = ifelse(data$Obesity.rate > 39.6, "red", "blue"),  
+                        popup = ~paste("Obesity Rate:", Obesity.rate, "%"))
+
+# Display the map
+map
+```
+
+### Analyzing Data using BoxPlots
+
+#### In statistics, a boxplot (also known as a box and whisker plot) is a type of chart often used in explanatory data analysis. Box plots visually show the distribution of numerical data and skewness by displaying the data quartiles (or percentiles) and averages.
+
+#### Box plots show the five-number summary of a set of data: including the minimum score, first (lower) quartile, median, third (upper) quartile, and maximum score.
+
+```{r}
+# Analyzing data using Boxplots 
+variables_of_interest <- c("Obesity.rate")
+
+# Creating boxplots for selected variables
+for (variable in variables_of_interest) {
+  p <- ggplot(data, aes(y = !!as.name(variable))) +
+    geom_boxplot(fill = "skyblue") +
+    labs(title = paste("Boxplot of", variable), y = "Value") +
+    theme_minimal()
+  print(p)
+  # Print summary statistics
+  cat("Summary Statistics for", variable, ":\n")
+  print(summary(data[[variable]]))
+  cat("\n\n")
+}
+```
+
+### Analyzing Data using Histograms
+
+#### A histogram is a type of chart that shows the frequency distribution of data points across a continuous range of numerical values. The values are grouped into bin or buckets that are arranged in consecutive order along the horizontal x-axis at the bottom of the chart. Each bin is represented by a vertical bar that sits on the x-axis and extends upward to indicate the number of data points within that bin.
+
+```{r}
+# Analyzing data using Histograms
+variables_of_interest <- c("Obesity.rate")
+
+# Create histograms for selected variables
+for (variable in variables_of_interest) {
+  p <- ggplot(data, aes(x = !!as.name(variable))) +
+    geom_histogram(fill = "skyblue", color = "black", bins = 30) +
+    labs(title = paste("Histogram of", variable), x = "Value", y = "Frequency") +
+    theme_minimal()
+  
+  print(p)
+}
+```
+
+```{r}
+# Analyzing data using Density Graph
+
+continuous_variables <- c("X..White","X..Black","X..Ame.Indi.and.AK.Native","X..Asian","X..Nati.Hawa.and.Paci.Island","X..Hispanic.or.Latino","X..male","X..married","X..age.18.29","X..age.30.39","X..age.40.49","X..age.50.59","X..age....60","X...highschool","X....highschool.and...university","X....university","Med.income","X..unemployment","X..below.poverty.line","X..food.stamp.SNAP","Median.value.units.built","Median.year.units.built","X..renter.occupied.housing.units")
+
+# Creating density graphs
+for (variable in continuous_variables) {
+  # Check if the variable is numeric (continuous)
+  if (is.numeric(data[[variable]])) {
+    # Create a density plot for the current variable
+    p <- ggplot(data, aes(x = !!sym(variable))) +
+      geom_histogram(fill = "skyblue", color = "black") +
+      labs(title = paste("Density Plot of", variable),
+           x = variable, y = "Density") +
+      theme_minimal()
+    
+    # Print the plot
+    print(p)
+  }
+}
+```
+
+### Multi-Collinearity Diagnosis (Diagnostic Test 1)
+
+#### Multicollinearity is a statistical phenomenon that occurs when two or more independent variables in a regression model are highly correlated with each other. In other words, multicollinearity indicates a strong linear relationship among the predictor variables. This can create challenges in the regression analysis because it becomes difficult to determine the individual effects of each independent variable on the dependent variable accurately.
+
+#### Multicollinearity can lead to unstable and unreliable coefficient estimates, making it harder to interpret the results and draw meaningful conclusions from the model. It is essential to detect and address multicollinearity to ensure the validity and robustness of regression models.
+
+#### Multicollinearity occurs when two or more independent variables in a data frame have a high correlation with one another in a regression model.
+
+#### After we finish collecting data, we first carry out a series of diagnostic tests to examine whether there exists multicollinearity among the neighborhood-level socioeconomic and demographic variables. To do so, we compute the variance inflation factor (VIF) for the 23 variables, and all variables are standardized by their mean and standard deviation before the analyses. We then gradually remove the variables with the highest VIF values until they are all smaller than the typical cut-off value 5
+
+
+```{r}
+# Multi-collinearity Diagnosis
+
+# Extracting predictor variables, standardizing predictor variables, and merge back
+predictors <-data[,c('X..Black','X..White','X..Ame.Indi.and.AK.Native','X..Asian','X..Nati.Hawa.and.Paci.Island','X..Hispanic.or.Latino','X..male','X..married','X..age.18.29','X..age.30.39','X..age.40.49','X..age.50.59','X..age....60','X...highschool','X....highschool.and...university','X....university','Med.income','X..unemployment','X..below.poverty.line','X..food.stamp.SNAP','Median.value.units.built','Median.year.units.built','X..renter.occupied.housing.units')]
+standardized_predictors <- scale(predictors)
+
+ohters <-data[,c('Obesity.rate','lon','lat')]
+
+standardized_data <- cbind(ohters, standardized_predictors)
+
+# Calculating Variance Inflation Factor (VIF)
+vif <- vif(lm(Obesity.rate ~ ., data = standardized_data))
+
+# Converting VIF values to a data frame
+vif_df <- data.frame(
+  Variables = names(vif),
+  VIF_Values = vif
+)
+
+# Checking for high VIF values indicating multi-collinearity
+high_vif_vars <- names(vif)[vif > 5]  # Adjusting the threshold as 5
+
+if (length(high_vif_vars) > 0) {
+  high_vif_df <- data.frame(
+    Variables = high_vif_vars,
+    VIF_Values = vif[high_vif_vars]
+  )
+  high_vif_df %>%
+    gt() %>%
+    tab_header(title = "High VIF Variables")
+} else {
+  print("No multicollinearity detected (all VIF values <= 5)")
+}
+```
+
+### Multi-Collinearity Diagnosis (Diagnostic Test 2)
+
+#### We removed the %\>=university variable which has highest VIF value.
+
+```{r}
+# Multi-Collinearity Diagnosis (Diagnostic Test 2 (Removed %>=university Variable))
+
+# Calculating Variance Inflation Factor (VIF)
+vif <- car::vif(lm(Obesity.rate ~ X..Black + X..White + X..Ame.Indi.and.AK.Native + X..Asian + X..Nati.Hawa.and.Paci.Island + X..Hispanic.or.Latino + X..male + X..married + X..age.18.29 + X..age.30.39 + X..age.40.49 + X..age.50.59 + X..age....60 + X...highschool + X....highschool.and...university + Med.income + X..unemployment + X..below.poverty.line + X..food.stamp.SNAP + Median.value.units.built + Median.year.units.built + X..renter.occupied.housing.units, data = standardized_data))
+
+# Converting VIF values to a data frame
+vif_df2 <- data.frame(
+  Variables = names(vif),
+  VIF_Values = vif
+)
+
+# Checking for high VIF values indicating multi-collinearity
+high_vif_vars <- names(vif)[vif > 5]  # Adjust the threshold as needed
+
+if (length(high_vif_vars) > 0) {
+  high_vif_df <- data.frame(
+    Variables = high_vif_vars,
+    VIF_Values = vif[high_vif_vars]
+  )
+  high_vif_df %>%
+    gt() %>%
+    tab_header(title = "High VIF Variables")
+} else {
+  print("No multicollinearity detected (all VIF values <= 5)")
+}
+```
+
+### Multi-Collinearity Diagnosis (Diagnostic Test 3)
+
+#### We removed the % White variable which has the highest VIF value
+
+```{r}
+# Multi-Collinearity Diagnosis (Diagnostic Test 3 (Removed % White))
+
+# Calculating Variance Inflation Factor (VIF)
+vif <- car::vif(lm(Obesity.rate ~ X..Black + X..Ame.Indi.and.AK.Native + X..Asian + X..Nati.Hawa.and.Paci.Island + X..Hispanic.or.Latino + X..male + X..married + X..age.18.29 + X..age.30.39 + X..age.40.49 + X..age.50.59 + X..age....60 + X...highschool + X....highschool.and...university + Med.income + X..unemployment + X..below.poverty.line + X..food.stamp.SNAP + Median.value.units.built + Median.year.units.built + X..renter.occupied.housing.units, data = standardized_data))
+
+# Converting VIF values to a data frame
+vif_df3 <- data.frame(
+  Variables = names(vif),
+  VIF_Values = vif
+)
+
+# Creating a gt table for VIF values
+vif_table <- vif_df3 %>%
+  gt() %>%
+  tab_header(title = "VIF Values")
+
+# Displaying the VIF values
+print(vif_table)
+
+# Checking for high VIF values indicating multi-collinearity
+high_vif_vars <- names(vif)[vif > 5]  # Adjust the threshold as needed
+
+if (length(high_vif_vars) > 0) {
+  high_vif_df <- data.frame(
+    Variables = high_vif_vars,
+    VIF_Values = vif[high_vif_vars]
+  )
+  high_vif_df %>%
+    gt() %>%
+    tab_header(title = "High VIF Variables")
+} else {
+  print("No multicollinearity detected (all VIF values <= 5)")
+}
+```
+
+### Creating a new Dataset excluding variables leading to multi-collinearity
+
+```{r}
+# Creating a new dataset excluding variables leading to multi-collinearity
+
+
+selected_vars <- c("Obesity.rate","lon","lat","X..Black","X..Ame.Indi.and.AK.Native","X..Asian","X..Nati.Hawa.and.Paci.Island","X..Hispanic.or.Latino","X..male","X..married","X..age.18.29","X..age.30.39","X..age.40.49","X..age.50.59","X..age....60","X...highschool","X....highschool.and...university","Med.income","X..unemployment","X..below.poverty.line","X..food.stamp.SNAP","Median.value.units.built","Median.year.units.built","X..renter.occupied.housing.units")
+
+# Create a new dataset with the selected variables
+new_data <- standardized_data[, selected_vars]
+new_data
+```
+
+### Statistical and Machine Learning Models
+
+#### 1. Ordinary Least Squares (OLS)
+
+##### Ordinary Least Squares: OLS is a statistical model of analysis that estimates the relationship between multiple input independent variables and the target outcome variable. The OLS model used in this work is in the form of Equation (1):
+
+##### Obesity rate = 𝜃0 + 𝜃𝑟𝑟 + 𝜃𝑎𝑎 + 𝜃𝑠𝑠 + 𝜃𝑒𝑒 + 𝜃ℎℎ +𝜃𝑢𝑢 + 𝜀 , where
+
+##### 𝜃r, 𝜃a, 𝜃s, 𝜃e, 𝜃h , 𝜃u are the coefficients for the five categories of socioeconomic and demographic variables respectively. Note that each of 𝜃r, 𝜃a, 𝜃s, 𝜃e, 𝜃h , 𝜃u contains multiple coefficients for the variables in that category.
+
+```{r}
+# Statistical and Machine Learning Models
+
+# 1. Ordinary Least Squares (OLS)
+
+# Performing OLS regression
+ols_model <- lm(Obesity.rate ~ X..Black + X..Ame.Indi.and.AK.Native + X..Asian + X..Nati.Hawa.and.Paci.Island + X..Hispanic.or.Latino + X..male + X..married + X..age.18.29 + X..age.30.39 + X..age.40.49 + X..age.50.59 + X..age....60 + X...highschool + X....highschool.and...university + Med.income + X..unemployment + X..below.poverty.line + X..food.stamp.SNAP + Median.value.units.built + Median.year.units.built + X..renter.occupied.housing.units, data = new_data)
+
+ols_model_summary <- summary(ols_model)
+ols_model_summary
+
+# Calculating Average RMSE and R-squared across all folds
+ols_preds <- predict(ols_model, data = new_data)
+residuals <- data$Obesity.rate - ols_preds
+ols_rmse <- sqrt(mean(residuals^2))
+ols_r_squared <- ols_model_summary$r.squared
+
+# Create a data frame with the results
+results_df <- data.frame(
+  Metric = c("RMSE", "R-squared"),
+  Value = c(ols_rmse, ols_r_squared)
+)
+
+# Create the gt table
+results_table <- results_df %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Model Performance"
+  )
+
+# Print the table
+print(results_table)
+
+# Extracting variable names
+variable_names <- names(coef(ols_model))[-1]
+
+# Setting wider margin
+par(mar = c(5, 15, 2, 2) + 0.1)  # Adjusting margin as needed
+
+# Plotting a bar plot of the coefficients
+coef_ols_model <- coef(ols_model)[-1]
+
+coefficients <- data.frame(
+  Name = variable_names,
+  value = coef_ols_model
+)
+
+coefficients_order <- coefficients[order(coefficients$value), ]
+
+barplot(coefficients_order$value, 
+        main = "Coefficients of OLS Regression", 
+        xlab = "Coefficient Value", 
+        ylab = "", 
+        horiz = TRUE, 
+        col = "skyblue", 
+        names.arg = coefficients_order$Name, 
+        las = 1,
+        cex.names = 0.7)  # Ensuring labels are horizontal
+```
+
+#### 2. Geographically Weighted Regression (GWR)
+
+##### Geographically Weighted Regression: GWR fits local OLS models for each geographic unit (i.e, census tract in this study) by taking into account spatial dependence and spatial heterogeneity. Specifically, the GWR model used in this work is in the form of Equation (2):
+
+##### Obesity rate = 𝜃0(𝑥𝑖, 𝑦𝑖) + 𝜃𝑟(𝑥𝑖, 𝑦𝑖)𝑟 + 𝜃𝑎(𝑥𝑖, 𝑦𝑖)𝑎 + 𝜃𝑠(𝑥𝑖, 𝑦𝑖)𝑠 + 𝜃𝑒(𝑥𝑖, 𝑦𝑖)𝑒 + 𝜃ℎ(𝑥𝑖, 𝑦𝑖)ℎ + 𝜃𝑢(𝑥𝑖, 𝑦𝑖)𝑢 + 𝜀𝑖 , where
+
+##### (𝑥i, 𝑦i) is the spatial coordinates of the geographic unit i. The coefficients have the same meaning as used in OLS, but will vary across different geographic locations capturing the heterogeneous local processes.
+
+```{r}
+library(spgwr)
+library(sf)
+
+data_sf <- st_as_sf(new_data, coords = c("lon", "lat"), crs = 4326, agr = "constant")
+
+coords_matrix <- cbind(st_coordinates(data_sf)[,1], st_coordinates(data_sf)[,2])
+
+gwr_model <- gwr(Obesity.rate ~ X..Black + X..Ame.Indi.and.AK.Native + X..Asian + X..Nati.Hawa.and.Paci.Island + X..Hispanic.or.Latino + X..male + X..married + X..age.18.29 + X..age.30.39 + X..age.40.49 + X..age.50.59 + X..age....60 + X...highschool + X....highschool.and...university + Med.income + X..unemployment + X..below.poverty.line + X..food.stamp.SNAP + Median.value.units.built + Median.year.units.built + X..renter.occupied.housing.units, data = data_sf, coords = coords_matrix, bandwidth = 45)
+
+summary(gwr_model)
+```
+```{r}
+predicted_values <- gwr_model$SDF$pred
+actual_values <- data_sf$Obesity.rate
+R2 <- summary(lm(predicted_values ~ actual_values))$r.squared
+RMSE <- sqrt(mean((predicted_values - actual_values)^2))
+
+results_df <- data.frame(
+  Metric = c("RMSE", "R-squared"),
+  Value = c(RMSE, R2)
+)
+
+# Create the gt table
+results_table <- results_df %>%
+  gt() %>%
+  tab_header(
+    title = "Summary of Model Performance"
+  )
+
+print(results_table)
+```
+
+
+```{r}
+coefficients_matrix <- gwr_model$SDF@data
+coefficients_matrix_1 <- coefficients_matrix[, !names(coefficients_matrix) %in% c("sum.w","(Intercept)","gwr.e","pred","localR2")]
+mean_coefficients <- colMeans(coefficients_matrix_1, na.rm = TRUE)  
+variables <- names(coefficients_matrix_1)
+mean_coefficients_df <- data.frame(Variable = variables, Mean_Coefficient = mean_coefficients)
+
+mean_coefficients_order <- mean_coefficients_df[order(mean_coefficients_df$Mean_Coefficient), ]
+par(mar = c(5, 15, 2, 2) + 0.1)  # Adjusting margin as needed
+barplot(mean_coefficients_order$Mean_Coefficient, 
+        main = "Coefficients of GWR", 
+        xlab = "MeanCoefficient Value", 
+        ylab = "", 
+        horiz = TRUE, 
+        col = "skyblue", 
+        names.arg = mean_coefficients_order$Variable, 
+        las = 1,
+        cex.names = 0.7) 
+```
+
+#### 3. Random Forest (RF)
+
+##### Random Forest: Random forest is a bagging-based machine learning model that applies an ensemble learning technique by constructing a group of decision trees. Compared with OLS that assumes a linear relation, RF can model nonlinear relations between input features and the target variable. Given this ability,RF has been used in a variety of previous studies in which the input features and the target variable likely have a nonlinear relation.
+
+```{r}
+# Statistical and Machine Learning Models
+
+# 3. Random Forest
+
+# Loading the dataset
+rf_data <- read.csv("obesity_estimation_final.csv")
+
+# Defining predictors and response variable
+predictors <- c('X..Black','X..Ame.Indi.and.AK.Native','X..Asian','X..Nati.Hawa.and.Paci.Island','X..Hispanic.or.Latino','X..male','X..married','X..age.18.29','X..age.30.39','X..age.40.49','X..age.50.59','X..age....60','X...highschool','X....highschool.and...university','Med.income','X..unemployment','X..below.poverty.line','X..food.stamp.SNAP', 'Median.value.units.built', 'Median.year.units.built', 'X..renter.occupied.housing.units')
+
+response <- 'Obesity.rate'
+
+# Standardizing the predictors
+rf_data[predictors] <- scale(rf_data[predictors])
+
+# Creating a 10-fold cross-validation object
+rf_ctrl <- trainControl(method = "cv", number = 10)
+
+# Training the random forest model
+set.seed(123) # for reproducibility
+rf_model <- train(x = rf_data[predictors],
+                  y = rf_data[[response]],
+                  method = "rf",
+                  ntree = 10,
+                  trControl = rf_ctrl)
+
+# Predicting using the model
+predictions <- predict(rf_model, newdata = rf_data[predictors])
+
+# Calculating RMSE
+rmse <- sqrt(mean((predictions - rf_data[[response]])^2))
+
+# Calculating R^2
+rsq <- cor(predictions, rf_data[[response]])^2
+
+# Extracting feature importance
+importance <- varImp(rf_model)$importance
+
+# Plotting feature importance
+importance_df <- data.frame(Feature = rownames(importance), Importance = importance[,1])
+importance_df <- importance_df[order(importance_df$Importance, decreasing = TRUE), ]
+
+# Create a data frame with RMSE and R-squared values
+results <- data.frame(
+  Metric = c("RMSE", "R-squared"),
+  Value = c(rmse, rsq)
+)
+
+# Create a gt table
+results_table <- results %>%
+  gt() %>%
+  tab_header(
+    title = "Model Performance Metrics"
+  ) %>%
+  fmt_number(
+    columns = vars(Value),
+    decimals = 3
+  )
+
+# Print the table
+print(results_table)
+```
+
+```{r}
+importance_df_order = importance_df[order(importance_df$Importance), ]
+
+par(mar = c(5, 15, 2, 2) + 0.1)  # Adjusting margin as needed
+barplot(importance_df_order$Importance, 
+        main = "Feature Importance of RF", 
+        xlab = "Feature Importance", 
+        ylab = "", 
+        horiz = TRUE, 
+        col = "skyblue", 
+        names.arg = importance_df_order$Feature, 
+        las = 1,
+        cex.names = 0.7) 
+
+```
